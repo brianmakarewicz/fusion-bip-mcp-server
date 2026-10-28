@@ -36,8 +36,9 @@ def _token(ctx: FusionContext, fresh: bool = False) -> tuple[str, str, str]:
             if failed and time.time() - failed[0] < _BACKOFF_SECONDS:
                 raise FusionToolError(
                     f"Login was rejected ({failed[1]}). Not retrying for {_BACKOFF_SECONDS // 60} "
-                    "minutes to avoid locking the account; fix the stored credentials "
-                    "(fusion-mcp setup) and restart the server.")
+                    "minutes to avoid locking the account. Fix the password where it is set "
+                    "(FUSION_PASSWORD, your credential helper, or fusion-mcp setup) and "
+                    "restart the server.")
             try:
                 _tokens[key] = soap.login(url, user, pw)
             except FusionToolError as e:

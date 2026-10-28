@@ -82,8 +82,13 @@ def setup(password_stdin: bool = False) -> int:
 
     kr = _keyring()
     print("Fusion BIP MCP server setup. The password is stored in your OS keychain, not in a file.")
-    url = normalize_url(input("Fusion URL (e.g. https://<your-pod>.fa.<region>.oraclecloud.com): "))
-    user = input("Fusion username: ").strip()
+    try:
+        url = normalize_url(input("Fusion URL (e.g. https://<your-pod>.fa.<region>.oraclecloud.com): "))
+        user = input("Fusion username: ").strip()
+    except EOFError:
+        print("\nNo input. Run setup in a console, or pipe three lines (URL, username, "
+              "password) with --password-stdin.")
+        return 1
     if password_stdin:
         pw = sys.stdin.readline().rstrip("\r\n")
     elif not sys.stdin.isatty():

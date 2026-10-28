@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 
 from . import client
 from .context import default_context
+from .errors import FusionToolError
 from .metering import Meter
 
 mcp = MCPServer("fusion-bip")
@@ -29,8 +30,8 @@ def _clip(text: str) -> str:
     total = text.count(_ROW_END)
     cut = text.rfind(_ROW_END, 0, _MAX_CHARS)
     if cut == -1:
-        return (f"Result too large to return ({len(text)} characters for a single row). "
-                "Select fewer or narrower columns.")
+        raise FusionToolError(f"Result too large to return ({len(text)} characters in the first row). "
+                              "Select fewer or narrower columns.")
     kept = text[: cut + len(_ROW_END)]
     shown = kept.count(_ROW_END)
     return (kept + "\n</ROWSET>\n"
@@ -53,11 +54,19 @@ def query_fusion(sql: str, fusion_user: str | None = None) -> str:
 
     If the query fails, the Oracle error comes back. To fix a wrong table or
     column name (ORA-00942, ORA-00904), look the names up with this same tool:
-      - find tables and views: SELECT OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS
-        WHERE OBJECT_NAME LIKE 'AP_INVOICE%' AND OBJECT_TYPE IN ('TABLE','VIEW')
+      - find objects by keyword: SELECT OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS
+        WHERE OWNER = 'FUSION' AND OBJECT_NAME LIKE '%KEYWORD%'
+        AND OBJECT_TYPE IN ('TABLE','VIEW','SYNONYM')
       - list columns: SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS
-        WHERE TABLE_NAME = 'AP_INVOICES_ALL' ORDER BY COLUMN_ID
-    DBA_ views are not available. For what a table holds and how tables join,
+        WHERE OWNER = 'FUSION' AND TABLE_NAME = 'THE_TABLE' ORDER BY COLUMN_ID
+      - find which table has a column: ... FROM ALL_TAB_COLUMNS
+        WHERE OWNER = 'FUSION' AND COLUMN_NAME LIKE '%HIRE%'
+    Many Fusion names are synonyms, which have no rows in ALL_TAB_COLUMNS; use
+    the view or table they point to (ALL_SYNONYMS.TABLE_NAME). Tables ending in
+    _F or _M are date-effective: filter on SYSDATE BETWEEN EFFECTIVE_START_DATE
+    AND EFFECTIVE_END_DATE. Code columns can be decoded through FND_LOOKUP_VALUES.
+    DBA_ views are not available, and results only include data the connected
+    account is allowed to see. For what a table holds and how tables join,
     Oracle's "Tables and Views for Oracle Fusion Cloud" guides (Financials,
     Procurement, HCM, SCM, and so on) on docs.oracle.com describe every table and
     view. Then correct the SQL and run it again.

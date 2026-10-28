@@ -11,7 +11,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets an AI agent answer qu
 - `sql` is one `SELECT` (or `WITH ... SELECT`). Results come back as `<ROWSET><ROW><COLUMN_NAME>value</COLUMN_NAME>...</ROW></ROWSET>`, with tags taken from the column names or aliases, so give expressions an alias (`COUNT(*) AS INVOICE_COUNT`).
 - `fusion_user` is only used with a credential helper (option B below). Leave it out otherwise.
 
-**When a query fails**, the Oracle error comes back as the tool's error, for example `ORA-00942: table or view does not exist` or `ORA-00904: "VENDOR": invalid identifier`. The tool's description tells the agent how to recover: look tables up in `ALL_OBJECTS`, list columns from `ALL_TAB_COLUMNS` (both through this same tool), or read Oracle's *Tables and Views for Oracle Fusion Cloud* guides on docs.oracle.com, then correct the SQL and run it again. `DBA_` views are not available to Fusion users.
+**When a query fails**, the Oracle error comes back as the tool's error, for example `ORA-00942: table or view does not exist` or `ORA-00904: "VENDOR": invalid identifier`. The tool's description tells the agent how to recover: look tables up in `ALL_OBJECTS`, list columns from `ALL_TAB_COLUMNS` (both through this same tool), or read Oracle's *Tables and Views for Oracle Fusion Cloud* guides on docs.oracle.com, then correct the SQL and run it again. Many Fusion objects are synonyms, which have no rows in `ALL_TAB_COLUMNS`, so the description also tells the agent to follow a synonym to its view or table, to filter date-effective `_F`/`_M` tables on `SYSDATE`, and to decode code columns through `FND_LOOKUP_VALUES`. `DBA_` views are not available to Fusion users, and every answer is limited to the data the connected account can see.
 
 **Limits:** results over 40,000 characters are cut at a whole row and end with a comment saying how many rows were shown (set `FUSION_MCP_MAX_CHARS` to change the limit). Queries run against BI Publisher's `ApplicationDB_FSCM` data source, which can read Financials, Procurement, SCM and HCM tables, subject to the account's data security.
 
@@ -40,9 +40,9 @@ This installs the `fusion-mcp` command.
 .venv/bin/fusion-mcp setup
 ```
 
-It asks for the Fusion URL (`https://<your-pod>.fa.<region>.oraclecloud.com`; a pasted Fusion page address is trimmed to that), the username and the password (typing is hidden), tests the login, and saves only if the login works. The password goes into the operating system's credential store (Windows Credential Manager, macOS Keychain, or the Linux Secret Service), never into a file. The URL and username go into `fusion-mcp/config.json` under your user config folder. `fusion-mcp forget` removes both. Running `setup` again replaces the saved connection.
+It asks for the Fusion URL (`https://<your-pod>.fa.<region>.oraclecloud.com`; a pasted Fusion page address is trimmed to that), the username and the password (typing is hidden), tests the login, and saves only if the login works. The password goes into the operating system's credential store (Windows Credential Manager, macOS Keychain, or the Linux Secret Service), never into a file. The URL and username go into `fusion-mcp/config.json` under your user config folder. `fusion-mcp forget` removes both (the usage log, if any, stays in the same folder). Running `setup` again replaces the saved connection.
 
-The hidden password prompt needs a real console: run `setup` from PowerShell, cmd, Terminal or a Linux/macOS shell. In Git Bash (mintty) prefix it with `winpty`, or pipe the password in with `fusion-mcp setup --password-stdin`. `fusion-mcp --help` lists the commands.
+The hidden password prompt needs a real console: run `setup` from PowerShell, cmd, Terminal or a Linux/macOS shell. In Git Bash (mintty) prefix it with `winpty`, or use `fusion-mcp setup --password-stdin` and pipe in three lines: the URL, the username, then the password. `fusion-mcp --help` lists the commands.
 
 ### Option B: several accounts, through your own credential helper
 
