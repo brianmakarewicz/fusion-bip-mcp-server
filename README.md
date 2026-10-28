@@ -1,20 +1,23 @@
 # Fusion BIP MCP Server
 
-An [MCP](https://modelcontextprotocol.io) server that lets an AI agent run SQL queries against **Oracle Fusion** through BI Publisher. It has one tool, `query_fusion`, and talks to Fusion's BI Publisher SOAP service directly from your machine, so there is no database or middle tier to stand up.
+An [MCP](https://modelcontextprotocol.io) server that lets an AI agent answer questions from live **Oracle Fusion** data. You ask in plain English; the agent writes the SQL, runs it through this server, reads the rows back, and if the query fails it looks up the right tables and columns and tries again. The server has one tool, `query_fusion`, and talks to Fusion's BI Publisher SOAP service directly from your machine, so there is no database or middle tier to stand up.
 
 ## The tool
 
 | Tool | What it does | Arguments |
 |------|--------------|-----------|
-| `query_fusion` | Runs one SELECT against Oracle Fusion and returns the rows as XML | `sql`, `columns`, optional `fusion_user` |
+| `query_fusion` | Runs one query against Oracle Fusion and returns the rows as XML | `sql`, optional `fusion_user` |
 
-- `sql` is a single SELECT with no trailing semicolon. Alias every column to an upper-case name, for example `SELECT VENDOR_NAME AS SUPPLIER_NAME FROM POZ_SUPPLIERS_V WHERE ROWNUM <= 10`.
-- `columns` lists those aliases in SELECT order, for example `["SUPPLIER_NAME"]`. BI Publisher needs them to map the output. A name that does not appear in the SQL is rejected before anything is sent to Fusion.
-- `fusion_user` is only used with a credential helper (option B below). Leave it out to use the account you configured.
+- `sql` is one `SELECT` (or `WITH ... SELECT`). Results come back as `<ROWSET><ROW><COLUMN_NAME>value</COLUMN_NAME>...</ROW></ROWSET>`, with tags taken from the column names or aliases, so give expressions an alias (`COUNT(*) AS INVOICE_COUNT`).
+- `fusion_user` is only used with a credential helper (option B below). Leave it out otherwise.
 
-Errors from Fusion, such as `ORA-00942: table or view does not exist`, come back as tool errors with Fusion's message. Results longer than 40,000 characters are truncated; set `FUSION_MCP_MAX_CHARS` to change that.
+**When a query fails**, the Oracle error comes back as the tool's error, for example `ORA-00942: table or view does not exist` or `ORA-00904: "VENDOR": invalid identifier`. The tool's description tells the agent how to recover: look tables up in `ALL_OBJECTS`, list columns from `ALL_TAB_COLUMNS` (both through this same tool), or read Oracle's *Tables and Views for Oracle Fusion Cloud* guides on docs.oracle.com, then correct the SQL and run it again. `DBA_` views are not available to Fusion users.
 
-Each query runs through a temporary data model created in the account's own BI Publisher folder (`/~username`) and deleted when the call ends, whether it succeeds or fails. BI Publisher itself rejects anything other than a query, but the server does not parse the SQL, so use an account with only the access you want the agent to have.
+**Limits:** results over 40,000 characters are cut at a whole row and end with a comment saying how many rows were shown (set `FUSION_MCP_MAX_CHARS` to change the limit). Queries run against BI Publisher's `ApplicationDB_FSCM` data source, which can read Financials, Procurement, SCM and HCM tables, subject to the account's data security.
+
+**What it accepts:** the SQL must start with `SELECT` or `WITH` and must not contain a semicolon (one trailing semicolon is removed). The query runs inside a short PL/SQL block so BI Publisher can read the column names; refusing semicolons means nothing can be added after the query. BI Publisher also refuses DML and DDL on its own. Even so, use an account with only the access you want the agent to have.
+
+Each query runs through a temporary data model created in the account's own BI Publisher folder (`/~username`) and deleted when the call ends, whether it succeeds or fails.
 
 ## Setup
 
@@ -37,7 +40,9 @@ This installs the `fusion-mcp` command.
 .venv/bin/fusion-mcp setup
 ```
 
-It asks for the Fusion URL, username and password (typing is hidden), tests the login, and saves. The password goes into the operating system's credential store (Windows Credential Manager, macOS Keychain, or the Linux Secret Service), never into a file. The URL and username go into `fusion-mcp/config.json` under your user config folder. `fusion-mcp forget` removes both.
+It asks for the Fusion URL (`https://<your-pod>.fa.<region>.oraclecloud.com`; a pasted Fusion page address is trimmed to that), the username and the password (typing is hidden), tests the login, and saves only if the login works. The password goes into the operating system's credential store (Windows Credential Manager, macOS Keychain, or the Linux Secret Service), never into a file. The URL and username go into `fusion-mcp/config.json` under your user config folder. `fusion-mcp forget` removes both. Running `setup` again replaces the saved connection.
+
+The hidden password prompt needs a real console: run `setup` from PowerShell, cmd, Terminal or a Linux/macOS shell. In Git Bash (mintty) prefix it with `winpty`, or pipe the password in with `fusion-mcp setup --password-stdin`. `fusion-mcp --help` lists the commands.
 
 ### Option B: several accounts, through your own credential helper
 
@@ -48,6 +53,8 @@ Write a `conn_helper.py` in a folder outside the repo that defines `get_fusion_u
 | `FUSION_MCP_HELPER_DIR` | The folder containing your `conn_helper.py` |
 | `FUSION_MCP_USER` | The account name to use when a call does not name one |
 | `FUSION_MCP_POD` | Optional; passed to your helper as `pod` |
+
+Add an account with `.venv/bin/python conn_helper.py add <name>` (use the repo's virtual environment, which has `keyring`). Remove one by deleting it from `accounts.json` and its keychain entry (service `fusion-bip-mcp-server-helper`); `fusion-mcp forget` does not touch helper accounts.
 
 With option B the agent can name any account your helper knows through `fusion_user`, so only give the helper accounts you are happy for the agent to use.
 
@@ -85,7 +92,15 @@ On Windows the command is `.venv\Scripts\fusion-mcp.exe`. For option B, add the 
 
 ### Usage log
 
-Every call appends one line to `metering.jsonl` in the repo folder (set `FUSION_MCP_METER_LOG` to move it). It records the time, tool, duration, result size and outcome. It stores a hash and length of the SQL, not the SQL itself, and never stores result data.
+Every call appends one line to `metering.jsonl` in the same `fusion-mcp` config folder (set `FUSION_MCP_METER_LOG` to move it). It records the time, tool, duration, result size and outcome; for errors it keeps only the error type and ORA- code. It stores a hash and length of the SQL, not the SQL itself, and never stores result data.
+
+### Which credentials are used
+
+The server checks in this order and uses the first that is set: a credential helper (`FUSION_MCP_HELPER_DIR`), then `FUSION_PASSWORD` (option C), then the saved connection from `fusion-mcp setup`. A leftover `FUSION_PASSWORD` therefore takes precedence over a saved connection.
+
+If Fusion rejects the login, the server stops trying for five minutes so that an agent retrying in a loop cannot lock the account. Fix the credentials and restart the server.
+
+The server runs over stdio only, started by your MCP client. It has no network listener and does no caller authentication of its own.
 
 ## How it fits together
 
@@ -93,7 +108,7 @@ Every call appends one line to `metering.jsonl` in the repo folder (set `FUSION_
 - `client.py`: the backend the server imports.
 - `direct_client.py`: the query, run against BI Publisher SOAP.
 - `soap.py`: builds the SOAP requests and reads Fusion's responses and errors.
-- `builders.py`: checks the column list and builds the temporary data model.
+- `builders.py`: checks the SQL and builds the temporary data model.
 - `context.py`: finds your credentials (helper, saved connection, or environment).
 - `credentials.py`: the `setup` and `forget` commands and the OS keychain storage.
 - `metering.py`: the usage log.

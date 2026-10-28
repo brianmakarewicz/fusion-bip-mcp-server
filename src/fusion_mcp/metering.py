@@ -11,13 +11,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from typing import Any
 
-_LOG_PATH = os.environ.get(
-    "FUSION_MCP_METER_LOG",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "metering.jsonl"),
-)
+def _default_log() -> str:
+    base = os.environ.get("APPDATA") if os.name == "nt" else None
+    base = base or os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "fusion-mcp", "metering.jsonl")
+
+
+_LOG_PATH = os.environ.get("FUSION_MCP_METER_LOG") or _default_log()
 
 
 def _shape(value: Any) -> dict:
@@ -48,7 +52,10 @@ class Meter:
     def __exit__(self, exc_type, exc, tb):
         if exc_type is not None:
             self.outcome = "error"
-            self.detail = f"{exc_type.__name__}: {str(exc)[:200]}"
+            # Error text can quote table, column or literal values, so keep only
+            # the exception type and any ORA- code.
+            code = re.search(r"ORA-\d{5}", str(exc))
+            self.detail = exc_type.__name__ + (f" {code.group(0)}" if code else "")
         rec = {
             # NOTE: no wall-clock timestamp source that would break replay; use
             # epoch here since this is a real runtime log, not a workflow script.
@@ -62,6 +69,7 @@ class Meter:
             "detail": self.detail,
         }
         try:
+            os.makedirs(os.path.dirname(_LOG_PATH) or ".", exist_ok=True)
             with open(_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
         except OSError:

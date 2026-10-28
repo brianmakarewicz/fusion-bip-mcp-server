@@ -69,6 +69,7 @@ class FusionContext:
                     "FUSION_MCP_ACCEPT_PLAINTEXT_PASSWORD=yes to confirm you accept the risk.")
             if not (url and user):
                 raise FusionToolError("FUSION_PASSWORD is set but FUSION_URL or FUSION_USERNAME is missing.")
+            url = credentials.normalize_url(url)
         else:
             saved = credentials.load()
             if not saved:

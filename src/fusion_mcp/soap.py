@@ -60,10 +60,13 @@ def _fault(resp: str) -> str | None:
         return None
     text = html.unescape(m.group(1)).strip()
     # BIP wraps database errors in a long chain of Java exception names; the
-    # ORA- error at the end is the part an agent (or a person) can act on.
-    ora = re.search(r"(ORA-\d{5}:.*?)(?:\s+https?://\S+)?\s*$", text, re.S)
-    if ora:
-        return ora.group(1).strip()
+    # ORA- error is the part an agent (or a person) can act on.
+    # The query runs inside a PL/SQL block, so skip the block's wrapper codes
+    # (ORA-06550 position, ORA-06512 stack) and return the first real error.
+    oras = re.findall(r"ORA-\d{5}:[^\n]*", text)
+    real = [o for o in oras if not o.startswith(("ORA-06550", "ORA-06512"))]
+    if real or oras:
+        return re.sub(r"\s+https?://\S+", "", (real or oras)[0]).strip()
     # Otherwise keep only the innermost exception's message.
     return re.split(r"[\w.]+Exception:\s*", text)[-1].strip() or text
 

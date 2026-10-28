@@ -1,7 +1,8 @@
 """BIP artifact builders.
 
-These functions turn a simple request (SQL + column names) into the exact data
-model (.xdm) XML Oracle BIP expects.
+Turns one SELECT into the data model (.xdm) XML Oracle BIP expects. The query is
+opened as a ref cursor inside a short PL/SQL block, so BI Publisher reads the
+column names from the cursor and no column list is needed.
 """
 
 from __future__ import annotations
@@ -10,58 +11,55 @@ import re
 
 from .errors import FusionToolError
 
-_COLUMN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_LEADING = re.compile(r"^\s*(?:/\*.*?\*/\s*|--[^\n]*\n\s*)*", re.S)
 
 
-def check_columns(sql: str, columns: list[str]) -> None:
-    """Reject column lists that BI Publisher would silently turn into empty tags.
+def prepare_sql(sql: str) -> str:
+    """Return the SQL ready to embed, or raise if it is not a single query.
 
-    Each name must be an upper-case identifier, appear once, and appear in the SQL
-    as a word (normally its alias). A name that never appears in the SQL cannot
-    match a SELECT column, and BIP would return it empty on every row.
+    The query is placed after OPEN ... FOR inside a PL/SQL block. Anything after a
+    semicolon would run as an extra PL/SQL statement, so semicolons are refused
+    everywhere except one trailing semicolon, which is removed.
     """
-    if not columns:
-        raise FusionToolError("columns is empty: list the alias of every SELECT column")
-    bad = [c for c in columns if not _COLUMN.match(c)]
-    if bad:
+    s = sql.strip()
+    if s.endswith(";"):
+        s = s[:-1].rstrip()
+    if not s:
+        raise FusionToolError("sql is empty")
+    if ";" in s:
         raise FusionToolError(
-            f"Invalid column name(s) {bad}: use upper-case letters, digits and underscores, "
-            "starting with a letter, and alias each SELECT column to that name")
-    dupes = sorted({c for c in columns if columns.count(c) > 1})
-    if dupes:
-        raise FusionToolError(f"Duplicate column name(s) {dupes}")
-    missing = [c for c in columns if not re.search(rf"(?<![A-Z0-9_$#]){c}(?![A-Z0-9_$#])", sql, re.I)]
-    if missing:
-        raise FusionToolError(
-            f"Column(s) {missing} do not appear in the SQL. Each name in columns must be the "
-            "alias of a SELECT column (e.g. SELECT VENDOR_NAME AS SUPPLIER_NAME ...)")
-
-
-def build_data_model_xml(sql: str, columns: list[str]) -> str:
-    """Build a BIP data model (.xdm) that runs one SELECT and tags each column.
-
-    The SQL goes in a CDATA block; each column becomes an upper-case element in a
-    single group. Output uses upper-case tags and drops the rowset wrapper.
-    """
-    check_columns(sql, columns)
-    if "]]>" in sql:
+            "The SQL contains a semicolon. Send exactly one SELECT statement; if you need "
+            "a literal semicolon in a string, use CHR(59)")
+    if "]]>" in s:
         # BI Publisher rejects this sequence in a data model's SQL however it is escaped.
         raise FusionToolError("The SQL contains ']]>', which BI Publisher cannot accept; "
                               "write it as ']]' || '>' instead")
-    elems = "".join(
-        f'<element name="{c}" value="{c}" dataType="xsd:string" tagName="{c}"/>'
-        for c in columns
-    )
+    first = _LEADING.sub("", s)[:6].upper()
+    if not (first.startswith("SELECT") or first.startswith("WITH")):
+        raise FusionToolError("Only queries are allowed: the SQL must start with SELECT or WITH")
+    return s
+
+
+def build_data_model_xml(sql: str) -> str:
+    """Build a BIP data model (.xdm) that returns the rows of one query.
+
+    Output is <ROWSET><ROW><COLUMN_NAME>value</COLUMN_NAME>...</ROW></ROWSET>, with
+    tags taken from the query's column names or aliases.
+    """
+    q = prepare_sql(sql)
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
-        '<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.1" '
+        '<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.0" '
         'defaultDataSourceRef="ApplicationDB_FSCM">'
-        '<dataProperties><property name="include_rowsettag" value="false"/>'
+        '<dataProperties><property name="include_parameters" value="false"/>'
+        '<property name="include_null_Element" value="true"/>'
+        '<property name="include_rowsettag" value="false"/>'
         '<property name="xml_tag_case" value="upper"/></dataProperties>'
-        '<dataSets><dataSet name="Q" type="complex">'
-        f'<sql dataSourceRef="ApplicationDB_FSCM"><![CDATA[{sql}]]></sql></dataSet></dataSets>'
-        '<output rootName="DATA_DS" uniqueRowName="false"><nodeList name="data-structure">'
-        f'<dataStructure tagName="DATA_DS"><group name="G_1" label="G_1" source="Q">{elems}'
-        '</group></dataStructure></nodeList></output>'
-        '<eventTriggers/><lexicals/><parameters/><valueSets/><bursting/></dataModel>'
+        '<dataSets><dataSet name="Q" type="simple">'
+        '<sql dataSourceRef="ApplicationDB_FSCM" nsQuery="true" sp="true" xmlRowTagName="ROW">'
+        '<![CDATA[DECLARE type refcursor is REF CURSOR; xdo_cursor refcursor; '
+        f'BEGIN OPEN :xdo_cursor FOR {q}\n; END;]]>'
+        '</sql></dataSet></dataSets>'
+        '<output rootName="DATA_DS" uniqueRowName="false"><nodeList name="Q"/></output>'
+        '</dataModel>'
     )
