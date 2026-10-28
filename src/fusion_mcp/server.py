@@ -28,7 +28,7 @@ def _clip(text: str) -> str:
 
 
 @mcp.tool()
-def query_fusion(sql: str, columns: list[str], fusion_user: str = "bip_user") -> str:
+def query_fusion(sql: str, columns: list[str], fusion_user: str | None = None) -> str:
     """Run a read-only SELECT against Oracle Fusion and return the rows as XML.
 
     Args:
@@ -36,7 +36,8 @@ def query_fusion(sql: str, columns: list[str], fusion_user: str = "bip_user") ->
              to keep the result small — BIP serializes the whole set.
         columns: Output column aliases in SELECT order, upper-case identifiers.
                  Alias every column in the SQL to a simple upper-case name.
-        fusion_user: Fusion user to run as (default bip_user).
+        fusion_user: Optional account name. Leave it out to use the account
+                     the server was configured with.
     """
     ctx = default_context(fusion_user)
     with Meter(ctx.tenant, "query_fusion", {"sql": sql, "columns": columns}) as m:
@@ -46,12 +47,18 @@ def query_fusion(sql: str, columns: list[str], fusion_user: str = "bip_user") ->
 
 
 def main() -> None:
-    """Launch the server. Transport chosen by FUSION_MCP_TRANSPORT (stdio|http)."""
+    """Launch the server, or run `fusion-mcp setup` / `fusion-mcp forget`.
+
+    Transport is chosen by FUSION_MCP_TRANSPORT (stdio|http).
+    """
+    import sys
+    if len(sys.argv) > 1:
+        from .credentials import cli
+        raise SystemExit(cli(sys.argv[1:]))
     transport = os.environ.get("FUSION_MCP_TRANSPORT", "stdio").lower()
     if transport in ("http", "streamable-http"):
-        # Phase 2: remote. The MCP SDK reads host/port from FastMCP settings/env.
-        # Front this with a token-checking proxy, or bind to localhost, until the
-        # multi-tenant auth gateway (Phase 3) lands. See README "Phase 2".
+        # Remote transport. Bind to localhost or put an authenticating proxy in
+        # front; the server itself does no caller authentication.
         mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")

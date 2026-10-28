@@ -1,13 +1,40 @@
-"""BIP artifact builders — the transform IP that never ships to the client.
+"""BIP artifact builders.
 
 These functions turn a simple request (SQL + column names) into the exact data
-model (.xdm) XML Oracle BIP expects. In the hosted product these run only on the server, so a customer sends
-plain JSON and never sees how the XML is assembled, how parameters bind, or how
-nested queries are wired. This module is the single source of truth; both the
-hosted executors and the local stdio client build artifacts from here.
+model (.xdm) XML Oracle BIP expects.
 """
 
 from __future__ import annotations
+
+import re
+
+from .errors import FusionToolError
+
+_COLUMN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+def check_columns(sql: str, columns: list[str]) -> None:
+    """Reject column lists that BI Publisher would silently turn into empty tags.
+
+    Each name must be an upper-case identifier, appear once, and appear in the SQL
+    as a word (normally its alias). A name that never appears in the SQL cannot
+    match a SELECT column, and BIP would return it empty on every row.
+    """
+    if not columns:
+        raise FusionToolError("columns is empty: list the alias of every SELECT column")
+    bad = [c for c in columns if not _COLUMN.match(c)]
+    if bad:
+        raise FusionToolError(
+            f"Invalid column name(s) {bad}: use upper-case letters, digits and underscores, "
+            "starting with a letter, and alias each SELECT column to that name")
+    dupes = sorted({c for c in columns if columns.count(c) > 1})
+    if dupes:
+        raise FusionToolError(f"Duplicate column name(s) {dupes}")
+    missing = [c for c in columns if not re.search(rf"(?<![A-Z0-9_$#]){c}(?![A-Z0-9_$#])", sql, re.I)]
+    if missing:
+        raise FusionToolError(
+            f"Column(s) {missing} do not appear in the SQL. Each name in columns must be the "
+            "alias of a SELECT column (e.g. SELECT VENDOR_NAME AS SUPPLIER_NAME ...)")
 
 
 def build_data_model_xml(sql: str, columns: list[str]) -> str:
@@ -16,6 +43,11 @@ def build_data_model_xml(sql: str, columns: list[str]) -> str:
     The SQL goes in a CDATA block; each column becomes an upper-case element in a
     single group. Output uses upper-case tags and drops the rowset wrapper.
     """
+    check_columns(sql, columns)
+    if "]]>" in sql:
+        # BI Publisher rejects this sequence in a data model's SQL however it is escaped.
+        raise FusionToolError("The SQL contains ']]>', which BI Publisher cannot accept; "
+                              "write it as ']]' || '>' instead")
     elems = "".join(
         f'<element name="{c}" value="{c}" dataType="xsd:string" tagName="{c}"/>'
         for c in columns
