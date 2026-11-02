@@ -7,12 +7,13 @@ credentials, and records one metadata-only line in the metering log.
 
 from __future__ import annotations
 
+import json
 import os
 
 from mcp.server.mcpserver import MCPServer
 
-from . import client
-from .context import default_context
+from . import client, credentials
+from .context import default_context, source
 from .errors import FusionToolError
 from .metering import Meter
 
@@ -40,7 +41,7 @@ def _clip(text: str) -> str:
 
 
 @mcp.tool()
-def query_fusion(sql: str, fusion_user: str | None = None) -> str:
+def query_fusion(sql: str, instance: str | None = None, fusion_user: str | None = None) -> str:
     """Run one SQL query against Oracle Fusion and return the rows as XML.
 
     Use this to answer questions from live Fusion data: write the SQL, run it,
@@ -71,20 +72,54 @@ def query_fusion(sql: str, fusion_user: str | None = None) -> str:
     Procurement, HCM, SCM, and so on) on docs.oracle.com describe every table and
     view. Then correct the SQL and run it again.
 
+    Several Fusion instances (often different clients) and several users per
+    instance can be saved; list_fusion_connections shows them. Name the instance
+    and user on each call when more than one is saved. Each instance is a separate
+    environment: do not mix or copy data between instances unless asked to, and
+    the same SQL can return different rows for different users because of their
+    data security.
+
     Args:
         sql: One SELECT statement.
-        fusion_user: Optional account name, only used when the server is set up
-                     with a credential helper. Leave it out otherwise.
+        instance: Optional saved instance name; leave it out to use the default.
+        fusion_user: Optional username saved on that instance; leave it out to use
+                     the instance's default user.
     """
-    ctx = default_context(fusion_user)
+    ctx = default_context(instance, fusion_user)
     with Meter(ctx.tenant, "query_fusion", {"sql": sql}) as m:
         out = client.query_fusion(ctx, sql)
         m.result_size(len(out))
         return _clip(out)
 
 
+@mcp.tool()
+def list_fusion_connections() -> str:
+    """List the saved Fusion instances and the users saved on each, as JSON.
+
+    Shows each instance's name, URL, users and default user, and which instance
+    is the default. Passwords are never shown. Use the names with query_fusion's
+    instance and fusion_user arguments. Instances and users are added, and
+    passwords changed, by the person running the server with
+    `fusion-mcp setup --instance NAME --user NAME`; the next query uses them,
+    with no restart.
+    """
+    with Meter("local", "list_fusion_connections") as m:
+        src = source()
+        if src == "saved":
+            out = credentials.describe()
+        elif src == "env":
+            out = {"note": "Configured with environment variables: one connection, no instance names.",
+                   "url": os.environ.get("FUSION_URL"), "user": os.environ.get("FUSION_USERNAME")}
+        else:
+            out = {"note": "Configured with a credential helper, which cannot be listed. Pass the "
+                           "helper's pod name as instance and its account name as fusion_user."}
+        text = json.dumps(out, indent=2)
+        m.result_size(len(text))
+        return text
+
+
 def main() -> None:
-    """Launch the server over stdio, or run `fusion-mcp setup | forget | --help`.
+    """Launch the server over stdio, or run `fusion-mcp setup | list | default | forget | --help`.
 
     Only stdio is offered: the server does no caller authentication, so it is
     meant to be started by a local MCP client, not exposed on a network port.
