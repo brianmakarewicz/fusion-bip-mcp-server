@@ -37,11 +37,11 @@ It asks for a name for the instance, the Fusion URL and your username. The passw
 
 #### Steps for an AI agent
 
-1. Check that Python 3.10+ and Git are installed. If either is missing, tell the user how to install it and stop.
-2. Clone the repo into the user's home folder, create `.venv` inside it, and run `pip install -e .` with the venv's pip. If the folder already exists, run `git pull` there instead of cloning.
+1. Check that Python 3.10+ and Git are installed and that `python -c "import tkinter"` works (the password window needs it). If anything is missing, tell the user how to install it and stop.
+2. Clone the repo into the user's home folder (`%USERPROFILE%` on Windows), create the venv with `python -m venv .venv` inside it, and run `pip install -e .` with the venv's pip. If the folder already exists, run `git pull` there instead of cloning.
 3. Ask the user for a short instance name (for example the client's name), the Fusion URL, and the Fusion username. Never ask for the password in chat.
-4. Run `<repo>/.venv/Scripts/fusion-mcp setup --instance NAME --url URL --user USER` (`.venv/bin/fusion-mcp` on macOS and Linux) with a timeout of at least five minutes. With no terminal attached, a window opens for the user to type the password, so tell them to look for it. It prints `Saved` on success. On `Login failed`, tell the user and run it again only when they ask, so a wrong password is not retried into a locked account.
-5. Register the server for the user: `claude mcp add fusion-bip --scope user -- <full path to fusion-mcp>` (`fusion-mcp.exe` on Windows). If `claude mcp list` already has a server named `fusion-bip`, ask the user before replacing it or pick another name.
+4. Run `<repo>/.venv/Scripts/fusion-mcp setup --instance NAME --url URL --user USER` (`.venv/bin/fusion-mcp` on macOS and Linux) with a timeout of at least five minutes. With no terminal attached, a window opens for the user to type the password, so tell them to look for it. It prints `Saved` on success. If other instances were already saved, ask whether this one should be the default and, if so, run `fusion-mcp default --instance NAME`. On `Login failed`, tell the user and run it again only when they ask, so a wrong password is not retried into a locked account.
+5. Register the server for the user: `claude mcp add fusion-bip --scope user -- <full path to fusion-mcp>` (`fusion-mcp.exe` on Windows). If `claude mcp list` already has a server named `fusion-bip`, ask the user before replacing it or pick another name. Confirm with `claude mcp get fusion-bip` that it shows Connected.
 6. Tell the user to close and reopen Claude Code, then ask a question about their Fusion data.
 
 To add another user or instance later, the user can ask Claude Code to do it, which is step 4 again with the new names.
