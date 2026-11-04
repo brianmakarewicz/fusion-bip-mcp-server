@@ -75,9 +75,9 @@ def query_fusion(sql: str, instance: str | None = None, fusion_user: str | None 
     Several Fusion instances (often different clients) and several users per
     instance can be saved; list_fusion_connections shows them. Name the instance
     and user on each call when more than one is saved. Each instance is a separate
-    environment: do not mix or copy data between instances unless asked to, and
-    the same SQL can return different rows for different users because of their
-    data security.
+    environment: do not mix or copy data between instances unless asked to.
+    Direct SQL on most Fusion base tables is not filtered by data security, so
+    do not assume a user sees only their own business units or ledgers.
 
     Args:
         sql: One SELECT statement.
