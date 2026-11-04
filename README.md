@@ -15,9 +15,9 @@ An [MCP](https://modelcontextprotocol.io) server that lets an AI agent answer qu
 
 One session can switch freely, for example querying client A as a finance user, then as an HCM user, then client B. The tool's description tells the agent that each instance is a separate environment and not to mix data between them unless asked.
 
-**When a query fails**, the Oracle error comes back as the tool's error, for example `ORA-00942: table or view does not exist` or `ORA-00904: "VENDOR": invalid identifier`. The tool's description tells the agent how to recover: look tables up in `ALL_OBJECTS`, list columns from `ALL_TAB_COLUMNS` (both through this same tool), or read Oracle's *Tables and Views for Oracle Fusion Cloud* guides on docs.oracle.com, then correct the SQL and run it again. Many Fusion objects are synonyms, which have no rows in `ALL_TAB_COLUMNS`, so the description also tells the agent to follow a synonym to its view or table, to filter date-effective `_F`/`_M` tables on `SYSDATE`, and to decode code columns through `FND_LOOKUP_VALUES`. `DBA_` views are not available to Fusion users, and every answer is limited to the data the connected account can see.
+**When a query fails**, the Oracle error comes back as the tool's error, for example `ORA-00942: table or view does not exist` or `ORA-00904: "VENDOR": invalid identifier`. The tool's description tells the agent how to recover: look tables up in `ALL_OBJECTS`, list columns from `ALL_TAB_COLUMNS` (both through this same tool), or read Oracle's *Tables and Views for Oracle Fusion Cloud* guides on docs.oracle.com, then correct the SQL and run it again. Many Fusion objects are synonyms, which have no rows in `ALL_TAB_COLUMNS`, so the description also tells the agent to follow a synonym to its view or table, to filter date-effective `_F`/`_M` tables on `SYSDATE`, and to decode code columns through `FND_LOOKUP_VALUES`. `DBA_` views are not available to Fusion users.
 
-**Limits:** results over 40,000 characters are cut at a whole row and end with a comment saying how many rows were shown (set `FUSION_MCP_MAX_CHARS` to change the limit). Queries run against BI Publisher's `ApplicationDB_FSCM` data source, which can read Financials, Procurement, SCM and HCM tables, subject to the account's data security.
+**Limits:** results over 40,000 characters are cut at a whole row and end with a comment saying how many rows were shown (set `FUSION_MCP_MAX_CHARS` to change the limit). Queries run against BI Publisher's `ApplicationDB_FSCM` data source, which can read Financials, Procurement, SCM and HCM tables. SQL against most Fusion base tables is **not** filtered by the account's data security the way Fusion pages are (two users with different data roles get the same rows), so only save accounts whose access you are comfortable giving the agent.
 
 **What it accepts:** the SQL must start with `SELECT` or `WITH` and must not contain a semicolon (one trailing semicolon is removed). The query runs inside a short PL/SQL block so BI Publisher can read the column names; refusing semicolons means nothing can be added after the query. BI Publisher also refuses DML and DDL on its own. Even so, use an account with only the access you want the agent to have.
 
@@ -26,6 +26,27 @@ Each query runs through a temporary data model created in the account's own BI P
 ## Setup
 
 The repo contains no Fusion addresses, users or passwords. You supply your own.
+
+### Quick setup: let Claude Code do it
+
+Paste this into Claude Code:
+
+> Install and set up the Fusion MCP server from https://github.com/brianmakarewicz/fusion-bip-mcp-server. Follow "Steps for an AI agent" in its README.
+
+It asks for a name for the instance, the Fusion URL and your username. The password goes into a small window that opens on your screen, never into the chat. When it is done, close and reopen Claude Code and ask a question.
+
+#### Steps for an AI agent
+
+1. Check that Python 3.10+ and Git are installed and that `python -c "import tkinter"` works (the password window needs it). If anything is missing, tell the user how to install it and stop.
+2. Clone the repo into the user's home folder (`%USERPROFILE%` on Windows), create the venv with `python -m venv .venv` inside it, and run `pip install -e .` with the venv's pip. If the folder already exists, run `git pull` there instead of cloning.
+3. Ask the user for a short instance name (for example the client's name), the Fusion URL, and the Fusion username. Never ask for the password in chat.
+4. Run `<repo>/.venv/Scripts/fusion-mcp setup --instance NAME --url URL --user USER` (`.venv/bin/fusion-mcp` on macOS and Linux) with a timeout of at least five minutes. With no terminal attached, a window opens for the user to type the password, so tell them to look for it. It prints `Saved` on success. If other instances were already saved, ask whether this one should be the default and, if so, run `fusion-mcp default --instance NAME`. On `Login failed`, tell the user and run it again only when they ask, so a wrong password is not retried into a locked account.
+5. Register the server for the user: `claude mcp add fusion-bip --scope user -- <full path to fusion-mcp>` (`fusion-mcp.exe` on Windows). If `claude mcp list` already has a server named `fusion-bip`, ask the user before replacing it or pick another name. Confirm with `claude mcp get fusion-bip` that it shows Connected.
+6. Tell the user to close and reopen Claude Code, then ask a question about their Fusion data.
+
+To add another user or instance later, the user can ask Claude Code to do it, which is step 4 again with the new names.
+
+### Setting it up yourself
 
 **Requirements:** Python 3.10 or later, and a Fusion account that can create data models in its own BI Publisher folder (the BI Publisher Data Model Developer or Author role).
 
@@ -58,7 +79,7 @@ It asks for the Fusion URL (`https://<your-pod>.fa.<region>.oraclecloud.com`; a 
 
 The first instance and user you add become the defaults. A running server reads the saved connections on every call, so a new instance, user or password is used by the next query without restarting your MCP client. `--url` and `--user` can be given as options, and `--password-stdin` reads the password from standard input, so setup can be scripted.
 
-The hidden password prompt needs a real console: run `setup` from PowerShell, cmd, Terminal or a Linux/macOS shell. In Git Bash (mintty) prefix it with `winpty`, or use `--password-stdin`. `fusion-mcp --help` lists the commands.
+In a terminal, `setup` asks for the password with a hidden prompt. Where there is no terminal (an AI agent running the command, or Git Bash), it opens a small password window instead, which needs Python's tkinter (included with the python.org installers; `python3-tk` on Linux). You can also pipe the password in with `--password-stdin`. `fusion-mcp --help` lists the commands.
 
 Every saved user can be used by the agent through `instance` and `fusion_user`, so save only accounts whose access you are happy for the agent to have. To keep one session to a single client, set `FUSION_MCP_INSTANCE` in that session's MCP config (for example a project-level `.mcp.json`); it then becomes that session's default instance, although the agent can still name others.
 

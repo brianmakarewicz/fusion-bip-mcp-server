@@ -176,6 +176,38 @@ def _ask(prompt: str) -> str:
                               "(--url, --user) and pipe the password with --password-stdin.")
 
 
+def _password_window(instance: str, user: str) -> str | None:
+    """Ask for the password in a small window. Returns "" on Cancel, None if no window can open."""
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+    except Exception:
+        return None
+    result = {"pw": ""}
+
+    def ok(_=None):
+        result["pw"] = entry.get()
+        root.destroy()
+
+    root.title("Fusion MCP setup")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    tk.Label(root, justify="left", padx=16, pady=12, text=(
+        f"Enter the Fusion password for {user}\n(instance '{instance}').\n\n"
+        "It is tested, then saved in your computer's credential store.")).pack(anchor="w")
+    entry = tk.Entry(root, show="*", width=40)
+    entry.pack(padx=16, fill="x")
+    buttons = tk.Frame(root, pady=12)
+    buttons.pack()
+    tk.Button(buttons, text="Save", width=10, command=ok).pack(side="left", padx=4)
+    tk.Button(buttons, text="Cancel", width=10, command=root.destroy).pack(side="left", padx=4)
+    root.bind("<Return>", ok)
+    root.bind("<Escape>", lambda _: root.destroy())
+    root.after(100, lambda: (root.focus_force(), entry.focus_set()))
+    root.mainloop()
+    return result["pw"]
+
+
 def setup(instance: str | None, url: str | None, user: str | None, password_stdin: bool) -> int:
     """Add an instance, add a user to an instance, or change a saved user's password."""
     from . import soap  # local import: soap is not needed to load credentials
@@ -198,11 +230,14 @@ def setup(instance: str | None, url: str | None, user: str | None, password_stdi
     user = (user or _ask("Fusion username: ")).strip()
     if password_stdin:
         pw = sys.stdin.readline().rstrip("\r\n")
-    elif not sys.stdin.isatty():
-        print("No interactive console, so the hidden password prompt cannot work here (for example "
-              "Git Bash/mintty or piped input). Run setup from PowerShell, cmd or Terminal, prefix it "
-              "with `winpty` in Git Bash, or use --password-stdin.")
-        return 1
+    elif not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # No console (an AI agent ran this, or Git Bash): ask for the password in a small window.
+        # stdout is checked too because on Windows a NUL stdin also reports isatty().
+        pw = _password_window(name, user)
+        if pw is None:
+            print("No interactive console and no password window could be opened. Run setup from "
+                  "PowerShell, cmd or Terminal, or use --password-stdin.")
+            return 1
     else:
         pw = getpass.getpass(f"Password for {user} (hidden): ")
     if not (user and pw):
